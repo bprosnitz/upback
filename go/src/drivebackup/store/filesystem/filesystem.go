@@ -53,5 +53,5 @@ type DirSelectorOp interface{
 // FileSelectorOp only succeeds on files
 type FileSelectorOp interface {
 	Ref() (StoredBlobRef, error) // shorthand for single version, fails if multiple files
-	Versions() ([]BlobRef, error) // list all version of the file
+	Versions() ([]StoredBlobRef, error) // list all version of the file
 }

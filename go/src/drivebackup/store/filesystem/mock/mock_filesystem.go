@@ -3,7 +3,6 @@ package mock
 import (
 	"drivebackup/store/filesystem"
 	"fmt"
-	"math/rand"
 	"strings"
 	"os"
 	"time"
