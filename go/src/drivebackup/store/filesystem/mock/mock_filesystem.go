@@ -28,7 +28,7 @@ type mockFile struct {
 }
 
 type mockDir struct {
-	versions []*filesystem.Version
+	versions []filesystem.Version
 }
 
 type mockBucket struct {
@@ -165,11 +165,100 @@ func (s *mockSelector) validate(fileOp bool) (err error) {
 	}
 	return nil
 }
+func (s *mockSelector) version() (found bool, version filesystem.Version) {
+	var dirPath string
+	var filePath string
+	for _, constraint := range s.constraints {
+		switch constraint.t {
+		case mockVersionConstraint:
+			return true, constraint.version
+		case mockLatestConstraint:
+			if filePath != "" {
+				file := s.bucket.fileVersions[filePath]
+				return true, file.entries[len(file.entries-1)].Version
+			} else if dirPath != "" {
+				dir := s.bucket.dirVersions[dirPath]
+				return true, dir.versions[len(dir.versions-1)]
+			} else {
+				return true, s.bucket.latestVersion
+			}
+		case mockDirConstraint:
+			dirPath = filepath.Join(dirPath, constraint.path)
+		case mockFileConstraint:
+			dirPath = ""
+			filePath = filepath.Join(dirPath, constraint.path)
+		}
+	}
+	return false, 0
+}
+func (s *mockSelector) dirPath() string {
+	var dirPath string
+	for _, constraint := range s.constraints {
+		switch constraint.t {
+		case mockDirConstraint:
+			dirPath = filepath.Join(dirPath, constraint.path)
+		}
+	}
+	return dirPath
+}
+func (s *mockSelector) filePath() string {
+	var path string
+	for _, constraint := range s.constraints {
+		switch constraint.t {
+		case mockDirConstraint:
+			path = filepath.Join(path, constraint.path)
+		case mockFileConstraint:
+			path = filepath.Join(path, constraint.path)
+		}
+	}
+	return path
+}
 func (s *mockSelector) List() ([]string, error) {
 	if err := s.validate(false); err != nil {
 		return nil, err
 	}
-	// DOSTUFF
+	versionFound, version := s.version()
+	dirPath := s.dirPath()
+	dir := s.bucket.dirVersions[dirPath]
+	var validVersions []filesystem.Version
+	if versionFound {
+		for _, dirVersion := range dir.versions {
+			if dirVersion == version {
+				validVersions = version
+				break
+			}
+		}
+	} else {
+		validVersions = dir.versions
+	}
+
+	var results map[string]bool
+	for path, dir := range s.bucket.dirVersions {
+		for _, validVersion := range validVersions {
+			for _, dirVersion := range dir.versions {
+				 if dirVersion == validVersion && strings.HasPrefix(path, dirPath + os.PathSeparator) {
+					seg := strings.Split(strings.TrimPrefix(path, dirPath), os.PathSeparator)[0]
+					results[dirPath + os.PathSeparator + seg] = true
+				}
+			}
+		}
+	}
+	for path, file := range s.bucket.fileVersions {
+		for _, validVersion := range validVersions {
+			for _, fileEntry := range file.entries {
+				if fileEntry.Version == validVersion && strings.HasPrefix(path, dirPath + os.PathSeparator) {
+					seg := strings.Split(strings.TrimPrefix(path, dirPath), os.PathSeparator)[0]
+					results[dirPath + os.PathSeparator + seg] = true
+				}
+			}
+		}
+	}
+
+	var finalResults []string
+	for key := range results {
+		finalResults = append(finalResults, key)
+	}
+	return finalResults
 }
 func (s *mockSelector) Ref() (filesystem.StoredBlobRef, error) {
 	if err := s.validate(true); err != nil {
