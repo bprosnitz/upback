@@ -34,15 +34,15 @@ type mockDir struct {
 type mockBucket struct {
 	fileVersions map[string]*mockFile
 	dirVersions map[string]*mockDir
-	latestVersion string
+	latestVersion filesystem.Version
 }
 
 // put transaction
 type mockPutTransaction struct {
-	blobs map[string]filesystem.BlobRef
-	dirs map[string]bool
+	blobs  map[string]filesystem.BlobRef
+	dirs   map[string]bool
 	bucket *mockBucket
-	currPath string
+	path   string
 }
 
 type mockConstraintType int
@@ -73,10 +73,10 @@ func (m *mockBucket) Select() filesystem.Selector {
 }
 
 func (tx *mockPutTransaction) Commit() error {
-	version := fmt.Sprintf("%d", time.Now().Unix())
+	version := filesystem.Version(fmt.Sprintf("%d", time.Now().Unix()))
 	for version == tx.bucket.latestVersion {
 		<- time.After(100 * time.Millisecond)
-		version = fmt.Sprintf("%d", time.Now().Unix())
+		version = filesystem.Version(fmt.Sprintf("%d", time.Now().Unix()))
 	}
 	for path := range tx.dirs {
 		dir, ok := tx.bucket.dirVersions[path]
@@ -99,36 +99,36 @@ func (tx *mockPutTransaction) Commit() error {
 }
 
 func (tx *mockPutTransaction) Dir(path string) filesystem.PutTransactionPath {
-	fullPath := filepath.Join(tx.currPath, path)
+	fullPath := filepath.Join(tx.path, path)
 	tx.dirs[fullPath] = true
 	return &mockPutTransaction{blobs: tx.blobs, dirs: tx.dirs, bucket: tx.bucket, path: fullPath}
 }
 
 func (tx *mockPutTransaction) File(name string, blobRef filesystem.BlobRef) {
-	tx.blobs[filepath.Join(tx.currPath, name)] = blobRef
+	tx.blobs[filepath.Join(tx.path, name)] = blobRef
 }
 
 func (s *mockSelector) Version(version filesystem.Version) filesystem.Selector {
 	return &mockSelector{
-		constraints: append(s.constraints, &mockConstraint{t: mockVersionConstraint, version: version}),
+		constraints: append(s.constraints, mockConstraint{t: mockVersionConstraint, version: version}),
 		bucket: s.bucket,
 	}
 }
 func (s *mockSelector) Latest() filesystem.Selector {
 	return &mockSelector{
-		constraints: append(s.constraints, &mockConstraint{t: mockLatestConstraint}),
+		constraints: append(s.constraints, mockConstraint{t: mockLatestConstraint}),
 		bucket: s.bucket,
 	}
 }
 func (s *mockSelector) Dir(path string) filesystem.Selector {
 	return &mockSelector{
-		constraints: append(s.constraints, &mockConstraint{t: mockDirConstraint, path: path}),
+		constraints: append(s.constraints, mockConstraint{t: mockDirConstraint, path: path}),
 		bucket: s.bucket,
 	}
 }
 func (s *mockSelector) File(name string) filesystem.Selector {
 	return &mockSelector{
-		constraints: append(s.constraints, &mockConstraint{t: mockFileConstraint, path: name}),
+		constraints: append(s.constraints, mockConstraint{t: mockFileConstraint, path: name}),
 		bucket: s.bucket,
 	}
 }
@@ -139,12 +139,12 @@ func (s *mockSelector) validate(fileOp bool) (err error) {
 		switch constraint.t {
 		case mockVersionConstraint, mockLatestConstraint:
 			if sawVersionConstraint {
-				return false, fmt.Errorf("Version()/Latest() may only be called once")
+				return fmt.Errorf("Version()/Latest() may only be called once")
 			}
 			sawVersionConstraint = true
 		case mockFileConstraint:
 			if firstFileIndex != -1 {
-				return false, fmt.Errorf("File() must not be called twice")
+				return fmt.Errorf("File() must not be called twice")
 			}
 			firstFileIndex = i
 		}
@@ -224,7 +224,7 @@ func (s *mockSelector) List() ([]string, error) {
 	if versionFound {
 		for _, dirVersion := range dir.versions {
 			if dirVersion == version {
-				validVersions = version
+				validVersions = append(validVersions, version)
 				break
 			}
 		}
@@ -261,16 +261,46 @@ func (s *mockSelector) List() ([]string, error) {
 	return finalResults
 }
 func (s *mockSelector) Ref() (filesystem.StoredBlobRef, error) {
-	if err := s.validate(true); err != nil {
+	refs, err := s.Versions()
+	if err != nil {
 		return nil, err
 	}
-	// DOSTUFF
-
+	switch len(refs) {
+	case 0:
+		return nil, fmt.Errorf("no results found")
+	case 1:
+		return refs[0], nil
+	default:
+		return nil, fmt.Errorf("expected 1 version, got %v", len(refs))
+	}
 }
 func (s *mockSelector) Versions() ([]filesystem.StoredBlobRef, error) {
 	if err := s.validate(true); err != nil {
 		return nil, err
 	}
-	// DOSTUFF
-
+	versionFound, version := s.version()
+	filePath := s.filePath()
+	file := s.bucket.fileVersions[filePath]
+	if versionFound {
+		for _, entry := range file.entries {
+			if entry.Version == version {
+				return []filesystem.StoredBlobRef{
+					filesystem.StoredBlobRef{
+						BlobRef: entry.BlobRef,
+						Version: entry.Version,
+					},
+				}, nil
+			}
+		}
+		return nil, fmt.Errorf("no results found")
+	} else {
+		var results []filesystem.StoredBlobRef
+		for _, entry := range file.entries {
+			results = append(results, filesystem.StoredBlobRef{
+				BlobRef: entry.BlobRef,
+				Version: entry.Version,
+			})
+		}
+		return results, nil
+	}
 }
