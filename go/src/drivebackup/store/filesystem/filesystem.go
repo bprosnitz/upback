@@ -1,5 +1,7 @@
 package filesystem
 
+import "fmt"
+
 type Version string
 
 type BlobRef struct {
@@ -7,9 +9,17 @@ type BlobRef struct {
 	Name string // the blob name within the store
 }
 
+func (r *BlobRef) String() string {
+	return fmt.Sprintf("%s:%s", r.Store, r.Name)
+}
+
 type StoredBlobRef struct {
 	BlobRef
 	Version Version
+}
+
+func (r *StoredBlobRef) String() string {
+	return fmt.Sprintf("%v@%s", r.BlobRef, r.Version)
 }
 
 type FilesystemService interface {

@@ -4,6 +4,7 @@ import (
 	"testing"
 	"drivebackup/store/filesystem"
 	"drivebackup/store/filesystem/mock"
+	"fmt"
 )
 
 func TestMockFilesystemService(t *testing.T) {
