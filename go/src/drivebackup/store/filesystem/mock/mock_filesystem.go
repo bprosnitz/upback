@@ -18,6 +18,9 @@ func (m *MockFilesystemService) Bucket(bucket string) filesystem.Bucket {
 		return b
 	}
 	b := &mockBucket{fileVersions: map[string]*mockFile{}}
+	if m.m == nil {
+		m.m = map[string]*mockBucket{}
+	}
 	m.m[bucket] = b
 	return b
 }
@@ -78,6 +81,12 @@ func (tx *mockPutTransaction) Commit() error {
 		<- time.After(100 * time.Millisecond)
 		version = filesystem.Version(fmt.Sprintf("%d", time.Now().Unix()))
 	}
+	if tx.bucket.dirVersions == nil {
+		tx.bucket.dirVersions = map[string]*mockDir{}
+	}
+	if tx.bucket.fileVersions == nil {
+		tx.bucket.fileVersions = map[string]*mockFile{}
+	}
 	for path := range tx.dirs {
 		dir, ok := tx.bucket.dirVersions[path]
 		if !ok {
@@ -100,11 +109,17 @@ func (tx *mockPutTransaction) Commit() error {
 
 func (tx *mockPutTransaction) Dir(path string) filesystem.PutTransactionPath {
 	fullPath := filepath.Join(tx.path, path)
+	if tx.dirs == nil {
+		tx.dirs = map[string]bool{}
+	}
 	tx.dirs[fullPath] = true
 	return &mockPutTransaction{blobs: tx.blobs, dirs: tx.dirs, bucket: tx.bucket, path: fullPath}
 }
 
 func (tx *mockPutTransaction) File(name string, blobRef filesystem.BlobRef) {
+	if tx.blobs == nil {
+		tx.blobs = map[string]filesystem.BlobRef{}
+	}
 	tx.blobs[filepath.Join(tx.path, name)] = blobRef
 }
 
@@ -175,10 +190,10 @@ func (s *mockSelector) version() (found bool, version filesystem.Version) {
 		case mockLatestConstraint:
 			if filePath != "" {
 				file := s.bucket.fileVersions[filePath]
-				return true, file.entries[len(file.entries-1)].Version
+				return true, file.entries[len(file.entries)-1].Version
 			} else if dirPath != "" {
 				dir := s.bucket.dirVersions[dirPath]
-				return true, dir.versions[len(dir.versions-1)]
+				return true, dir.versions[len(dir.versions)-1]
 			} else {
 				return true, s.bucket.latestVersion
 			}
@@ -189,7 +204,7 @@ func (s *mockSelector) version() (found bool, version filesystem.Version) {
 			filePath = filepath.Join(dirPath, constraint.path)
 		}
 	}
-	return false, 0
+	return false, ""
 }
 func (s *mockSelector) dirPath() string {
 	var dirPath string
@@ -236,9 +251,9 @@ func (s *mockSelector) List() ([]string, error) {
 	for path, dir := range s.bucket.dirVersions {
 		for _, validVersion := range validVersions {
 			for _, dirVersion := range dir.versions {
-				 if dirVersion == validVersion && strings.HasPrefix(path, dirPath + os.PathSeparator) {
-					seg := strings.Split(strings.TrimPrefix(path, dirPath), os.PathSeparator)[0]
-					results[dirPath + os.PathSeparator + seg] = true
+				 if dirVersion == validVersion && strings.HasPrefix(path, dirPath + string(os.PathSeparator)) {
+					seg := strings.Split(strings.TrimPrefix(path, dirPath), string(os.PathSeparator))[0]
+					results[dirPath + string(os.PathSeparator) + seg] = true
 				}
 			}
 		}
@@ -246,9 +261,9 @@ func (s *mockSelector) List() ([]string, error) {
 	for path, file := range s.bucket.fileVersions {
 		for _, validVersion := range validVersions {
 			for _, fileEntry := range file.entries {
-				if fileEntry.Version == validVersion && strings.HasPrefix(path, dirPath + os.PathSeparator) {
-					seg := strings.Split(strings.TrimPrefix(path, dirPath), os.PathSeparator)[0]
-					results[dirPath + os.PathSeparator + seg] = true
+				if fileEntry.Version == validVersion && strings.HasPrefix(path, dirPath + string(os.PathSeparator)) {
+					seg := strings.Split(strings.TrimPrefix(path, dirPath), string(os.PathSeparator))[0]
+					results[dirPath + string(os.PathSeparator) + seg] = true
 				}
 			}
 		}
@@ -258,20 +273,20 @@ func (s *mockSelector) List() ([]string, error) {
 	for key := range results {
 		finalResults = append(finalResults, key)
 	}
-	return finalResults
+	return finalResults, nil
 }
 func (s *mockSelector) Ref() (filesystem.StoredBlobRef, error) {
 	refs, err := s.Versions()
 	if err != nil {
-		return nil, err
+		return filesystem.StoredBlobRef{}, err
 	}
 	switch len(refs) {
 	case 0:
-		return nil, fmt.Errorf("no results found")
+		return filesystem.StoredBlobRef{}, fmt.Errorf("no results found")
 	case 1:
 		return refs[0], nil
 	default:
-		return nil, fmt.Errorf("expected 1 version, got %v", len(refs))
+		return filesystem.StoredBlobRef{}, fmt.Errorf("expected 1 version, got %v", len(refs))
 	}
 }
 func (s *mockSelector) Versions() ([]filesystem.StoredBlobRef, error) {

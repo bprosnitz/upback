@@ -50,7 +50,7 @@ func filesystemTest(t *testing.T, service filesystem.FilesystemService) {
 	if err := tx3.Commit(); err != nil {
 		t.Errorf("error committing tx1: %v", err)
 	}
-	files, err = bucket1.Select().Dir("x").Dir("y").File("z").Ref()
+	ref, err = bucket1.Select().Dir("x").Dir("y").File("z").Ref()
 	if err != nil {
 		t.Errorf("error fetching ref x/y/z: %v", err)
 	}  else if got, want := ref.BlobRef, (filesystem.BlobRef{"store_b", "store_b_xyz"}); got != want {
