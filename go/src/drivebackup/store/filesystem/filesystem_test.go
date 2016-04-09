@@ -37,16 +37,16 @@ func (t *tWrapper) Fatalf(format string, args ...interface{}) {
 	panic("Fatalf")
 }
 
-func (t *tWrapper) Run(f func(t *testing.T, service filesystem.FilesystemService), serviceFactory func() filesystem.FilesystemService) {
+func (t *tWrapper) Run(f func(t T, service filesystem.FilesystemService), serviceFactory func() filesystem.FilesystemService) {
 	defer func() {
 		if t.fatal {
 			recover()
 		}
 	}()
-	f(t.t, serviceFactory())
+	f(t, serviceFactory())
 }
 
-func putAndGetFileTest(t *testing.T, service filesystem.FilesystemService) {
+func putAndGetFileTest(t T, service filesystem.FilesystemService) {
 	bucket1 := service.Bucket("testbucket1")
 
 	in := filesystem.BlobRef{"store_a", "store_a_abcd"}
@@ -65,19 +65,102 @@ func putAndGetFileTest(t *testing.T, service filesystem.FilesystemService) {
 	}
 }
 
+func multipleResultRefTest(t T, service filesystem.FilesystemService) {
+	bucket1 := service.Bucket("testbucket1")
+
+	in1 := filesystem.BlobRef{"store_a1", "store_a_abcd1"}
+	tx1 := bucket1.NewPutTransaction()
+	tx1.File("a", in1)
+	if err := tx1.Commit(); err != nil {
+		t.Fatalf("error committing tx1: %v", err)
+	}
+
+	in2 := filesystem.BlobRef{"store_a2", "store_a_abcd2"}
+	tx1 = bucket1.NewPutTransaction()
+	tx1.File("a", in2)
+	if err := tx1.Commit(); err != nil {
+		t.Fatalf("error committing tx1: %v", err)
+	}
+
+	_, err := bucket1.Select().File("a").Ref()
+	if err == nil {
+		t.Fatalf("expected error calling ref with multiple results")
+	}
+}
+
+func multipleResultVersionsTest(t T, service filesystem.FilesystemService) {
+	bucket1 := service.Bucket("testbucket1")
+
+	in1 := filesystem.BlobRef{"store_a1", "store_a_abcd1"}
+	tx1 := bucket1.NewPutTransaction()
+	tx1.File("a", in1)
+	if err := tx1.Commit(); err != nil {
+		t.Fatalf("error committing tx1: %v", err)
+	}
+
+	in2 := filesystem.BlobRef{"store_a2", "store_a_abcd2"}
+	tx1 = bucket1.NewPutTransaction()
+	tx1.File("a", in2)
+	if err := tx1.Commit(); err != nil {
+		t.Fatalf("error committing tx1: %v", err)
+	}
+
+	storedRefs, err := bucket1.Select().File("a").Versions()
+	if err != nil {
+		t.Fatalf("error fetching ref: %v", err)
+	}
+
+	// TODO(bprosnitz) Must we enforce sorted order?
+	if storedRefs[0].BlobRef != in1 {
+		t.Errorf("got %v, want %v", storedRefs[0].BlobRef, in1)
+	}
+	if storedRefs[1].BlobRef != in2 {
+		t.Errorf("got %v, want %v", storedRefs[1].BlobRef, in2)
+	}
+}
+
+func latestFileTest(t T, service filesystem.FilesystemService) {
+	bucket1 := service.Bucket("testbucket1")
+
+	in1 := filesystem.BlobRef{"store_a1", "store_a_abcd1"}
+	tx1 := bucket1.NewPutTransaction()
+	tx1.File("a", in1)
+	if err := tx1.Commit(); err != nil {
+		t.Fatalf("error committing tx1: %v", err)
+	}
+
+	in2 := filesystem.BlobRef{"store_a2", "store_a_abcd2"}
+	tx1 = bucket1.NewPutTransaction()
+	tx1.File("a", in2)
+	if err := tx1.Commit(); err != nil {
+		t.Fatalf("error committing tx1: %v", err)
+	}
+
+	storedRef, err := bucket1.Select().File("a").Latest().Ref()
+	if err != nil {
+		t.Fatalf("error fetching ref: %v", err)
+	}
+	if storedRef.BlobRef != in2 {
+		t.Errorf("got %v, want %v", storedRef.BlobRef, in2)
+	}
+}
+
 
 func filesystemTest(t *testing.T, serviceFactory func() filesystem.FilesystemService) {
 	tests := []struct{
 		Name string
-		Func func(t *testing.T, service filesystem.FilesystemService)
+		Func func(t T, service filesystem.FilesystemService)
 	}{
 		{ "Put and Get File", putAndGetFileTest},
+		{ "Multiple Result Ref", multipleResultRefTest},
+		{ "Multiple Result Versions", multipleResultVersionsTest},
+		{ "Latest File", latestFileTest},
 	}
 	for _, test := range tests {
 		wrap := &tWrapper{name: test.Name, t: t}
 		wrap.Run(test.Func, serviceFactory)
 	}
-	
+
 	/*	bucket1 := service.Bucket("testbucket1")
 
 	tx1 := bucket1.NewPutTransaction()
