@@ -4,16 +4,81 @@ import (
 	"testing"
 	"drivebackup/store/filesystem"
 	"drivebackup/store/filesystem/mock"
-	"fmt"
 )
 
 func TestMockFilesystemService(t *testing.T) {
-	filesystemTest(t, &mock.MockFilesystemService{})
+	filesystemTest(t, func() filesystem.FilesystemService {
+		return &mock.MockFilesystemService{}
+	})
+}
+
+type T interface {
+	Errorf(format string, args ...interface{})
+	Fatalf(format string, args ...interface{})
+}
+
+type tWrapper struct {
+	name string
+	fatal bool
+	t *testing.T
+}
+
+func (t *tWrapper) Errorf(format string, args ...interface{}) {
+	nargs := []interface{}{t.name}
+	nargs = append(nargs, args...)
+	t.t.Errorf("%s" + format, nargs...)
+}
+
+func (t *tWrapper) Fatalf(format string, args ...interface{}) {
+	nargs := []interface{}{t.name}
+	nargs = append(nargs, args...)
+	t.t.Errorf("%s" + format, nargs...)
+	t.fatal = true
+	panic("Fatalf")
+}
+
+func (t *tWrapper) Run(f func(t *testing.T, service filesystem.FilesystemService), serviceFactory func() filesystem.FilesystemService) {
+	defer func() {
+		if t.fatal {
+			recover()
+		}
+	}()
+	f(t.t, serviceFactory())
+}
+
+func putAndGetFileTest(t *testing.T, service filesystem.FilesystemService) {
+	bucket1 := service.Bucket("testbucket1")
+
+	in := filesystem.BlobRef{"store_a", "store_a_abcd"}
+	tx1 := bucket1.NewPutTransaction()
+	tx1.File("a", in)
+	if err := tx1.Commit(); err != nil {
+		t.Fatalf("error committing tx1: %v", err)
+	}
+
+	storedRef, err := bucket1.Select().File("a").Ref()
+	if err != nil {
+		t.Fatalf("error fetching ref: %v", err)
+	}
+	if storedRef.BlobRef != in {
+		t.Errorf("got %v, want %v", storedRef.BlobRef, in)
+	}
 }
 
 
-func filesystemTest(t *testing.T, service filesystem.FilesystemService) {
-	bucket1 := service.Bucket("testbucket1")
+func filesystemTest(t *testing.T, serviceFactory func() filesystem.FilesystemService) {
+	tests := []struct{
+		Name string
+		Func func(t *testing.T, service filesystem.FilesystemService)
+	}{
+		{ "Put and Get File", putAndGetFileTest},
+	}
+	for _, test := range tests {
+		wrap := &tWrapper{name: test.Name, t: t}
+		wrap.Run(test.Func, serviceFactory)
+	}
+	
+	/*	bucket1 := service.Bucket("testbucket1")
 
 	tx1 := bucket1.NewPutTransaction()
 	tx1.Dir("x/y").Dir("z")
@@ -83,4 +148,5 @@ func filesystemTest(t *testing.T, service filesystem.FilesystemService) {
 	}
 
 	// TODO(bprosnitz) Test .Latest() before and after file (difference should be that before, you restrict files to just that version and after you only get versions for that file)
+*/
 }
