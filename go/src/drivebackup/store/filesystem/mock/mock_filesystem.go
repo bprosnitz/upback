@@ -163,7 +163,10 @@ func (tx *mockPutTransaction) Dir(path string) filesystem.PutTransactionPath {
 	if tx.dirs == nil {
 		tx.dirs = map[string]bool{}
 	}
-	tx.dirs[fullPath] = true
+	parts := strings.Split(fullPath, string(os.PathSeparator))
+	for i := 0; i <= len(parts); i++ {
+		tx.dirs[strings.Join(parts[:i], string(os.PathSeparator))] = true
+	}
 	return &mockPutTransaction{blobs: tx.blobs, dirs: tx.dirs, bucket: tx.bucket, path: fullPath}
 }
 
@@ -199,6 +202,10 @@ func (s *mockSelector) File(name string) filesystem.Selector {
 	}
 }
 func (s *mockSelector) validate(fileOp bool) (err error) {
+	if len(s.constraints) == 0 {
+		return nil
+	}
+
 	var sawVersionConstraint bool
 	firstFileIndex := -1
 	for i, constraint := range s.constraints {

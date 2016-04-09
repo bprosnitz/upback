@@ -143,8 +143,41 @@ func latestFileTest(t T, service filesystem.FilesystemService) {
 	if storedRef.BlobRef != in2 {
 		t.Errorf("got %v, want %v", storedRef.BlobRef, in2)
 	}
+
+	storedRef, err = bucket1.Select().Latest().File("a").Ref()
+	if err != nil {
+		t.Fatalf("error fetching ref: %v", err)
+	}
+	if storedRef.BlobRef != in2 {
+		t.Errorf("got %v, want %v", storedRef.BlobRef, in2)
+	}
 }
 
+func putDirTest(t T, service filesystem.FilesystemService) {
+	bucket1 := service.Bucket("testbucket1")
+
+	tx1 := bucket1.NewPutTransaction()
+	tx1.Dir("a")
+	if err := tx1.Commit(); err != nil {
+		t.Fatalf("error committing tx1: %v", err)
+	}
+
+	dirs, err := bucket1.Select().List()
+	if err != nil {
+		t.Fatalf("error fetching list: %v", err)
+	}
+	if len(dirs) != 1 || dirs[0] != "a" {
+		t.Errorf("got dirs %v, expected %v", dirs, []string{"a"})
+	}
+
+	dirs, err = bucket1.Select().Dir("a").List()
+	if err != nil {
+		t.Fatalf("error fetching list: %v", err)
+	}
+	if len(dirs) != 0 {
+		t.Errorf("got dirs %v, expected none", dirs)
+	}
+}
 
 func filesystemTest(t *testing.T, serviceFactory func() filesystem.FilesystemService) {
 	tests := []struct{
@@ -155,6 +188,7 @@ func filesystemTest(t *testing.T, serviceFactory func() filesystem.FilesystemSer
 		{ "Multiple Result Ref", multipleResultRefTest},
 		{ "Multiple Result Versions", multipleResultVersionsTest},
 		{ "Latest File", latestFileTest},
+		{ "Put Dir Test", putDirTest},
 	}
 	for _, test := range tests {
 		wrap := &tWrapper{name: test.Name, t: t}
