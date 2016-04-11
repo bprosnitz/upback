@@ -222,14 +222,14 @@ func (s *mockSelector) validate(fileOp bool) (err error) {
 			firstFileIndex = i
 		}
 	}
-	if firstFileIndex < len(s.constraints) - 2 {
-		return fmt.Errorf("File() must be the last filesystem selector")
-	} else if s.constraints[len(s.constraints)-1].t == mockDirConstraint {
-		return fmt.Errorf("File() must be the last filesystem selector")
-	}
 	if fileOp {
 		if firstFileIndex == -1 {
 			return fmt.Errorf("No File() selector specified for file operation")
+		}
+		if firstFileIndex < len(s.constraints) - 2 {
+			return fmt.Errorf("File() must be the last filesystem selector")
+		} else if s.constraints[len(s.constraints)-1].t == mockDirConstraint {
+			return fmt.Errorf("File() must be the last filesystem selector")
 		}
 	} else {
 		if firstFileIndex != -1 {
@@ -314,13 +314,12 @@ func (s *mockSelector) List() ([]string, error) {
 		validVersions = dir.versions
 	}
 
-	var results map[string]bool
+	results := map[string]bool{}
 	for path, dir := range s.bucket.dirVersions {
 		for _, validVersion := range validVersions {
 			for _, dirVersion := range dir.versions {
-				 if dirVersion == validVersion && strings.HasPrefix(path, dirPath + string(os.PathSeparator)) {
-					seg := strings.Split(strings.TrimPrefix(path, dirPath), string(os.PathSeparator))[0]
-					results[dirPath + string(os.PathSeparator) + seg] = true
+				if dirVersion == validVersion && inDir(path, dirPath) {
+					results[oneLevelPath(path, dirPath)] = true
 				}
 			}
 		}
@@ -328,9 +327,8 @@ func (s *mockSelector) List() ([]string, error) {
 	for path, file := range s.bucket.fileVersions {
 		for _, validVersion := range validVersions {
 			for _, fileEntry := range file.entries {
-				if fileEntry.Version == validVersion && strings.HasPrefix(path, dirPath + string(os.PathSeparator)) {
-					seg := strings.Split(strings.TrimPrefix(path, dirPath), string(os.PathSeparator))[0]
-					results[dirPath + string(os.PathSeparator) + seg] = true
+				if fileEntry.Version == validVersion && inDir(path, dirPath) {
+					results[oneLevelPath(path, dirPath)] = true
 				}
 			}
 		}
@@ -388,4 +386,37 @@ func (s *mockSelector) Versions() ([]filesystem.StoredBlobRef, error) {
 		}
 		return results, nil
 	}
+}
+
+func inDir(path, dirPath string) bool {
+	if dirPath == "" {
+		return path != ""
+	}
+	separatoredSubpath := dirPath
+	if len(dirPath) > 0 && dirPath[len(dirPath)-1] != os.PathSeparator {
+		separatoredSubpath += string(os.PathSeparator)
+	}
+	return strings.HasPrefix(path, separatoredSubpath)
+}
+
+func oneLevelName(path, base string) string {
+	if base == "" {
+		return strings.Split(path, string(os.PathSeparator))[0]
+	}
+	prefixLessPath := strings.TrimPrefix(path, base)
+	if prefixLessPath[0] == os.PathSeparator {
+		prefixLessPath = prefixLessPath[1:]
+	}
+	return strings.Split(prefixLessPath, string(os.PathSeparator))[0]
+}
+
+func oneLevelPath(path, base string) string {
+	if base == "" {
+		return oneLevelName(path, base)
+	}
+	suffixPath := base
+	if suffixPath[len(suffixPath)-1] != os.PathSeparator {
+		suffixPath += string(os.PathSeparator)
+	}
+	return suffixPath + oneLevelName(path, base)
 }
