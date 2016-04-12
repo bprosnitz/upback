@@ -369,15 +369,36 @@ func (s *mockSelector) Versions() ([]filesystem.Version, error) {
 		return nil, err
 	}
 	versionFound, version := s.versionConstraint()
+	var versions []string
 	filePath := s.filePath()
 	if file, ok := s.bucket.fileVersions[filePath]; ok {
-		return s.fileVersions(file, versionFound, version)
+		fileVersions, err := s.fileVersions(file, versionFound, version)
+		if err != nil {
+			return nil, err
+		}
+		for _, version := range fileVersions {
+			versions = append(versions, string(version))
+		}
 	}
 	dirPath := s.dirPath()
 	if dir, ok := s.bucket.dirVersions[dirPath]; ok {
-		return s.dirVersions(dir, versionFound, version)
+		dirVersions, err := s.dirVersions(dir, versionFound, version)
+		if err != nil {
+			return nil, err
+		}
+		for _, version := range dirVersions {
+			versions = append(versions, string(version))
+		}
 	}
-	return nil, fmt.Errorf("file not found")
+	sort.Strings(versions)
+	if len(versions) == 0 {
+		return nil, fmt.Errorf("file not found")
+	}
+	outVersions := make([]filesystem.Version, len(versions))
+	for i, v := range versions {
+		outVersions[i] = filesystem.Version(v)
+	}
+	return outVersions, nil
 }
 
 func (s *mockSelector) fileVersions(file *mockFile, versionFound bool, version filesystem.Version) ([]filesystem.Version, error) {
