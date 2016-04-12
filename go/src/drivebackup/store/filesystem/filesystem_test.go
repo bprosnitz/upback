@@ -211,6 +211,14 @@ func multipleVersionDirTest(t T, service filesystem.FilesystemService) {
 	if !reflect.DeepEqual(latestNames, []string{"a","c"}) {
 		t.Errorf("got unexpected dir listing: %v", latestNames)
 	}
+
+	versions, err := bucket1.Select().Dir("a").Versions()
+	if err != nil {
+		t.Fatalf("err getting versions: %v", err)
+	}
+	if len(versions) != 2 || versions[0] == versions[1] {
+		t.Errorf("invalid versions: %v", versions)
+	}
 }
 
 func filesystemTest(t *testing.T, serviceFactory func() filesystem.FilesystemService) {
