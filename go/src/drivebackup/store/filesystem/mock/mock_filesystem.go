@@ -238,7 +238,7 @@ func (s *mockSelector) validate(fileOp bool) (err error) {
 	}
 	return nil
 }
-func (s *mockSelector) version() (found bool, version filesystem.Version) {
+func (s *mockSelector) versionConstraint() (found bool, version filesystem.Version) {
 	var dirPath string
 	var filePath string
 	for _, constraint := range s.constraints {
@@ -296,7 +296,7 @@ func (s *mockSelector) List() ([]string, error) {
 	if err := s.validate(false); err != nil {
 		return nil, err
 	}
-	versionFound, version := s.version()
+	versionFound, version := s.versionConstraint()
 	dirPath := s.dirPath()
 	dir, ok := s.bucket.dirVersions[dirPath]
 	if !ok {
@@ -340,49 +340,68 @@ func (s *mockSelector) List() ([]string, error) {
 	}
 	return finalResults, nil
 }
-func (s *mockSelector) Ref() (filesystem.StoredBlobRef, error) {
-	refs, err := s.Versions()
-	if err != nil {
-		return filesystem.StoredBlobRef{}, err
+func (s *mockSelector) BlobRef() (filesystem.StoredBlobRef, error) {
+	versionFound, version := s.versionConstraint()
+	if !versionFound {
+		return filesystem.StoredBlobRef{}, fmt.Errorf("version must be specified for BlobRef()")
 	}
-	switch len(refs) {
-	case 0:
-		return filesystem.StoredBlobRef{}, fmt.Errorf("no results found")
-	case 1:
-		return refs[0], nil
-	default:
-		return filesystem.StoredBlobRef{}, fmt.Errorf("expected 1 version, got %v", len(refs))
-	}
-}
-func (s *mockSelector) Versions() ([]filesystem.StoredBlobRef, error) {
-	if err := s.validate(true); err != nil {
-		return nil, err
-	}
-	versionFound, version := s.version()
 	filePath := s.filePath()
 	file, ok := s.bucket.fileVersions[filePath]
 	if !ok {
-		return nil, fmt.Errorf("file not found: %v", filePath)
+		return filesystem.StoredBlobRef{}, fmt.Errorf("File not found")
 	}
+	for _, entry := range file.entries {
+		if entry.Version == version {
+			return *entry, nil
+		}
+	}
+	return filesystem.StoredBlobRef{}, fmt.Errorf("file %q has no version %q", filePath, version)
+}
+func (s *mockSelector) Versions() ([]filesystem.Version, error) {
+	if err := s.validate(true); err != nil {
+		return nil, err
+	}
+	versionFound, version := s.versionConstraint()
+	filePath := s.filePath()
+	if file, ok := s.bucket.fileVersions[filePath]; ok {
+		return s.fileVersions(file, versionFound, version)
+	}
+	dirPath := s.dirPath()
+	if dir, ok := s.bucket.dirVersions[dirPath]; ok {
+		return s.dirVersions(dir, versionFound, version)
+	}
+	return nil, fmt.Errorf("file not found")
+}
+
+func (s *mockSelector) fileVersions(file *mockFile, versionFound bool, version filesystem.Version) ([]filesystem.Version, error) {
 	if versionFound {
 		for _, entry := range file.entries {
 			if entry.Version == version {
-				return []filesystem.StoredBlobRef{
-					filesystem.StoredBlobRef{
-						BlobRef: entry.BlobRef,
-						Version: entry.Version,
-					},
-				}, nil
+				return []filesystem.Version{entry.Version}, nil
 			}
 		}
 		return nil, fmt.Errorf("no results found")
 	} else {
-		var results []filesystem.StoredBlobRef
+		var results []filesystem.Version
 		for _, entry := range file.entries {
-			results = append(results, filesystem.StoredBlobRef{
-				BlobRef: entry.BlobRef,
-				Version: entry.Version,
-			})
+			results = append(results, entry.Version)
+		}
+		return results, nil
+	}
+}
+
+func (s *mockSelector) dirVersions(dir *mockDir, versionFound bool, version filesystem.Version) ([]filesystem.Version, error) {
+	if versionFound {
+		for _, dirVersion := range dir.versions {
+			if dirVersion == version {
+				return []filesystem.Version{dirVersion}, nil
+			}
+		}
+		return nil, fmt.Errorf("no results found")
+	} else {
+		var results []filesystem.Version
+		for _, dirVersion := range dir.versions {
+			results = append(results, dirVersion)
 		}
 		return results, nil
 	}

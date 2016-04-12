@@ -53,6 +53,8 @@ type Selector interface {
 type SelectorOp interface {
 	DirSelectorOp
 	FileSelectorOp
+
+	Versions() ([]Version, error) // list all version of the file/dir
 }
 
 // DirSelectorOp only succeeds on dirs
@@ -62,6 +64,5 @@ type DirSelectorOp interface{
 
 // FileSelectorOp only succeeds on files
 type FileSelectorOp interface {
-	Ref() (StoredBlobRef, error) // shorthand for single version, fails if multiple files
-	Versions() ([]StoredBlobRef, error) // list all version of the file
+	BlobRef() (StoredBlobRef, error) // fails if multiple files
 }

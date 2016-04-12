@@ -4,6 +4,8 @@ import (
 	"testing"
 	"drivebackup/store/filesystem"
 	"drivebackup/store/filesystem/mock"
+	"sort"
+	"reflect"
 )
 
 func TestMockFilesystemService(t *testing.T) {
@@ -56,7 +58,7 @@ func putAndGetFileTest(t T, service filesystem.FilesystemService) {
 		t.Fatalf("error committing tx1: %v", err)
 	}
 
-	storedRef, err := bucket1.Select().File("a").Ref()
+	storedRef, err := bucket1.Select().File("a").Latest().BlobRef()
 	if err != nil {
 		t.Fatalf("error fetching ref: %v", err)
 	}
@@ -82,7 +84,7 @@ func multipleResultRefTest(t T, service filesystem.FilesystemService) {
 		t.Fatalf("error committing tx1: %v", err)
 	}
 
-	_, err := bucket1.Select().File("a").Ref()
+	_, err := bucket1.Select().File("a").BlobRef()
 	if err == nil {
 		t.Fatalf("expected error calling ref with multiple results")
 	}
@@ -105,17 +107,13 @@ func multipleResultVersionsTest(t T, service filesystem.FilesystemService) {
 		t.Fatalf("error committing tx1: %v", err)
 	}
 
-	storedRefs, err := bucket1.Select().File("a").Versions()
+	versions, err := bucket1.Select().File("a").Versions()
 	if err != nil {
 		t.Fatalf("error fetching ref: %v", err)
 	}
 
-	// TODO(bprosnitz) Must we enforce sorted order?
-	if storedRefs[0].BlobRef != in1 {
-		t.Errorf("got %v, want %v", storedRefs[0].BlobRef, in1)
-	}
-	if storedRefs[1].BlobRef != in2 {
-		t.Errorf("got %v, want %v", storedRefs[1].BlobRef, in2)
+	if len(versions) != 2 || versions[0] == versions[1] {
+		t.Fatalf("invalid versions: %v", versions)
 	}
 }
 
@@ -136,7 +134,7 @@ func latestFileTest(t T, service filesystem.FilesystemService) {
 		t.Fatalf("error committing tx1: %v", err)
 	}
 
-	storedRef, err := bucket1.Select().File("a").Latest().Ref()
+	storedRef, err := bucket1.Select().File("a").Latest().BlobRef()
 	if err != nil {
 		t.Fatalf("error fetching ref: %v", err)
 	}
@@ -144,7 +142,7 @@ func latestFileTest(t T, service filesystem.FilesystemService) {
 		t.Errorf("got %v, want %v", storedRef.BlobRef, in2)
 	}
 
-	storedRef, err = bucket1.Select().Latest().File("a").Ref()
+	storedRef, err = bucket1.Select().Latest().File("a").BlobRef()
 	if err != nil {
 		t.Fatalf("error fetching ref: %v", err)
 	}
@@ -179,6 +177,42 @@ func putDirTest(t T, service filesystem.FilesystemService) {
 	}
 }
 
+func multipleVersionDirTest(t T, service filesystem.FilesystemService) {
+	bucket1 := service.Bucket("testbucket1")
+
+	tx1 := bucket1.NewPutTransaction()
+	tx1.Dir("a")
+	tx1.Dir("b")
+	if err := tx1.Commit(); err != nil {
+		t.Fatalf("error committing tx1: %v", err)
+	}
+
+	tx2 := bucket1.NewPutTransaction()
+	tx2.Dir("a")
+	tx2.Dir("c")
+	if err := tx2.Commit(); err != nil {
+		t.Fatalf("error committing tx1: %v", err)
+	}
+
+	allNames, err := bucket1.Select().List()
+	if err != nil {
+		t.Fatalf("error listing dir: %v", err)
+	}
+	sort.Strings(allNames)
+	if !reflect.DeepEqual(allNames, []string{"a","b","c"}) {
+		t.Errorf("got unexpected dir listing: %v", allNames)
+	}
+
+	latestNames, err := bucket1.Select().Latest().List()
+	if err != nil {
+		t.Fatalf("error listing dir: %v", err)
+	}
+	sort.Strings(latestNames)
+	if !reflect.DeepEqual(latestNames, []string{"a","c"}) {
+		t.Errorf("got unexpected dir listing: %v", latestNames)
+	}
+}
+
 func filesystemTest(t *testing.T, serviceFactory func() filesystem.FilesystemService) {
 	tests := []struct{
 		Name string
@@ -189,6 +223,7 @@ func filesystemTest(t *testing.T, serviceFactory func() filesystem.FilesystemSer
 		{ "Multiple Result Versions", multipleResultVersionsTest},
 		{ "Latest File", latestFileTest},
 		{ "Put Dir Test", putDirTest},
+		{ "Multiple Version Dir", multipleVersionDirTest},
 	}
 	for _, test := range tests {
 		wrap := &tWrapper{name: test.Name, t: t}
