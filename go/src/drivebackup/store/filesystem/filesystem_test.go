@@ -246,6 +246,109 @@ func sameNameDirAndFileDifferentVersion(t T, service filesystem.FilesystemServic
 	}
 }
 
+func directorySpecifiers(t T, service filesystem.FilesystemService) {
+	bucket1 := service.Bucket("testbucket1")
+
+	tx1 := bucket1.NewPutTransaction()
+	tx1.Dir("a/b").Dir("c/d/e").Dir("f")
+	if err := tx1.Commit(); err != nil {
+		t.Fatalf("error committing tx1: %v", err)
+	}
+
+	tx2 := bucket1.NewPutTransaction()
+	tx2.Dir("a/b/c").Dir("d/e/f")
+	if err := tx2.Commit(); err != nil {
+		t.Fatalf("error committing tx2: %v", err)
+	}
+
+	versions, err := bucket1.Select().Dir("a/b/c/d/e/f").Versions()
+	if err != nil {
+		t.Fatalf("err retrieving versions: %v", err)
+	}
+	if len(versions) != 2 || versions[0] == versions[1] || versions[1] < versions[0] {
+		t.Errorf("invalid versions: %v", versions)
+	}
+
+	versions, err = bucket1.Select().Dir("a").Dir("b").Dir("c/d/e/f").Versions()
+	if err != nil {
+		t.Fatalf("err retrieving versions: %v", err)
+	}
+	if len(versions) != 2 || versions[0] == versions[1] || versions[1] < versions[0] {
+		t.Errorf("invalid versions: %v", versions)
+	}
+}
+
+func independentBuckets(t T, service filesystem.FilesystemService) {
+	bucket1 := service.Bucket("testbucket1")
+
+	tx1 := bucket1.NewPutTransaction()
+	in1 := filesystem.BlobRef{"store_a", "store_a_abcd"}
+	tx1.Dir("a/b").File("c", in1)
+	if err := tx1.Commit(); err != nil {
+		t.Fatalf("error committing tx1: %v", err)
+	}
+
+	bucket2 := service.Bucket("testbucket2")
+
+	tx2 := bucket2.NewPutTransaction()
+	in2 := filesystem.BlobRef{"store_b", "store_b_abcd"}
+	tx2.Dir("a/b").File("c", in2)
+	if err := tx2.Commit(); err != nil {
+		t.Fatalf("error committing tx2: %v", err)
+	}
+
+	versions, err := bucket1.Select().Dir("a/b").File("c").Versions()
+	if err != nil {
+		t.Fatalf("err in versions: %v", err)
+	}
+	if len(versions) != 1 {
+		t.Errorf("expected one version, got %v", versions)
+	}
+	blobRef, err := bucket1.Select().Dir("a/b").File("c").Latest().BlobRef()
+	if err != nil {
+		t.Fatalf("err in blobref: %v", err)
+	}
+	if blobRef.BlobRef != in1 || blobRef.Version != versions[0] {
+		t.Errorf("got %v, want %v", blobRef, in1)
+	}
+
+	versions, err = bucket2.Select().Dir("a/b").File("c").Versions()
+	if err != nil {
+		t.Fatalf("err in versions: %v", err)
+	}
+	if len(versions) != 1 {
+		t.Errorf("expected one version, got %v", versions)
+	}
+
+	blobRef, err = bucket2.Select().Dir("a/b").File("c").Latest().BlobRef()
+	if err != nil {
+		t.Fatalf("err in blobref: %v", err)
+	}
+	if blobRef.BlobRef != in2 || blobRef.Version != versions[0] {
+		t.Errorf("got %v, want %v", blobRef, in1)
+	}
+}
+
+func referenceSameBucket(t T, service filesystem.FilesystemService) {
+	bucket1 := service.Bucket("testbucket1")
+
+	in := filesystem.BlobRef{"store_a", "store_a_abcd"}
+	tx1 := bucket1.NewPutTransaction()
+	tx1.File("a", in)
+	if err := tx1.Commit(); err != nil {
+		t.Fatalf("error committing tx1: %v", err)
+	}
+
+	bucket1a := service.Bucket("testbucket1")
+	storedRef, err := bucket1a.Select().File("a").Latest().BlobRef()
+	if err != nil {
+		t.Fatalf("error fetching ref: %v", err)
+	}
+	if storedRef.BlobRef != in {
+		t.Errorf("got %v, want %v", storedRef.BlobRef, in)
+	}
+}
+
 func filesystemTest(t *testing.T, serviceFactory func() filesystem.FilesystemService) {
 	tests := []struct{
 		Name string
@@ -258,6 +361,9 @@ func filesystemTest(t *testing.T, serviceFactory func() filesystem.FilesystemSer
 		{ "Put Dir Test", putDirTest},
 		{ "Multiple Version Dir", multipleVersionDirTest},
 		{ "File and Dir Same Name", sameNameDirAndFileDifferentVersion},
+		{ "Directory Specifiers", directorySpecifiers},
+		{ "Independent Buckets", independentBuckets},
+		{ "Reference Same Bucket", referenceSameBucket},
 	}
 	for _, test := range tests {
 		wrap := &tWrapper{name: test.Name, t: t}

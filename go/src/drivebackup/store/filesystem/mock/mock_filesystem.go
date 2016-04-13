@@ -1,13 +1,15 @@
 package mock
 
 import (
-	"drivebackup/store/filesystem"
 	"fmt"
 	"strings"
 	"os"
 	"time"
 	"path/filepath"
 	"sort"
+
+	"drivebackup/store/filesystem"
+	"drivebackup/store/filesystem/selector"
 )
 
 type MockFilesystemService struct {
@@ -101,13 +103,6 @@ type mockPutTransaction struct {
 
 type mockConstraintType int
 
-const (
-	mockVersionConstraint mockConstraintType = iota
-	mockLatestConstraint
-	mockDirConstraint
-	mockFileConstraint
-)
-
 type mockConstraint struct {
 	t mockConstraintType
 	version filesystem.Version // if version constraint
@@ -115,7 +110,7 @@ type mockConstraint struct {
 }
 
 type mockSelector struct {
-	constraints []mockConstraint
+	constraints []selector.Constraint
 	bucket *mockBucket
 }
 
@@ -123,7 +118,12 @@ func (m *mockBucket) NewPutTransaction() filesystem.PutTransaction {
 	return &mockPutTransaction{bucket: m}
 }
 func (m *mockBucket) Select() filesystem.Selector {
-	return &mockSelector{bucket: m}
+	return selector.NewSelectorBuilder(func (constraints []selector.Constraint)  filesystem.SelectorOp {
+		return &mockSelector{
+			constraints: constraints,
+			bucket: m,
+		}
+	})
 }
 
 func (tx *mockPutTransaction) Commit() error {
@@ -177,79 +177,14 @@ func (tx *mockPutTransaction) File(name string, blobRef filesystem.BlobRef) {
 	tx.blobs[filepath.Join(tx.path, name)] = blobRef
 }
 
-func (s *mockSelector) Version(version filesystem.Version) filesystem.Selector {
-	return &mockSelector{
-		constraints: append(s.constraints, mockConstraint{t: mockVersionConstraint, version: version}),
-		bucket: s.bucket,
-	}
-}
-func (s *mockSelector) Latest() filesystem.Selector {
-	return &mockSelector{
-		constraints: append(s.constraints, mockConstraint{t: mockLatestConstraint}),
-		bucket: s.bucket,
-	}
-}
-func (s *mockSelector) Dir(path string) filesystem.Selector {
-	return &mockSelector{
-		constraints: append(s.constraints, mockConstraint{t: mockDirConstraint, path: path}),
-		bucket: s.bucket,
-	}
-}
-func (s *mockSelector) File(name string) filesystem.Selector {
-	return &mockSelector{
-		constraints: append(s.constraints, mockConstraint{t: mockFileConstraint, path: name}),
-		bucket: s.bucket,
-	}
-}
-func (s *mockSelector) validate(dirOp, fileOp bool) (err error) {
-	if len(s.constraints) == 0 {
-		return nil
-	}
-
-	var sawVersionConstraint bool
-	firstFileIndex := -1
-	for i, constraint := range s.constraints {
-		switch constraint.t {
-		case mockVersionConstraint, mockLatestConstraint:
-			if sawVersionConstraint {
-				return fmt.Errorf("Version()/Latest() may only be called once")
-			}
-			sawVersionConstraint = true
-		case mockFileConstraint:
-			if firstFileIndex != -1 {
-				return fmt.Errorf("File() must not be called twice")
-			}
-			firstFileIndex = i
-		}
-	}
-	if fileOp {
-		if firstFileIndex == -1 {
-			if !dirOp {
-				return fmt.Errorf("No File() selector specified for file operation")
-			}
-		} else {
-			if firstFileIndex < len(s.constraints) - 2 {
-				return fmt.Errorf("File() must be the last filesystem selector")
-			} else if s.constraints[len(s.constraints) - 1].t == mockDirConstraint {
-				return fmt.Errorf("File() must be the last filesystem selector")
-			}
-		}
-	}
-	if dirOp {
-		if firstFileIndex != -1 && !fileOp {
-			return fmt.Errorf("File() selector incorrectly specified for directory operation")
-		}
-	}
-	return nil
-}
 func (s *mockSelector) versionConstraint() (found bool, version filesystem.Version) {
 	var dirPath string
 	var filePath string
 	for _, constraint := range s.constraints {
-		switch constraint.t {
-		case mockVersionConstraint:
-			return true, constraint.version
-		case mockLatestConstraint:
+		switch constraint.Type {
+		case selector.VersionConstraint:
+			return true, constraint.Version
+		case selector.LatestConstraint:
 			if filePath != "" {
 				file, ok := s.bucket.fileVersions[filePath]
 				if !ok {
@@ -265,11 +200,11 @@ func (s *mockSelector) versionConstraint() (found bool, version filesystem.Versi
 			} else {
 				return true, s.bucket.latestVersion
 			}
-		case mockDirConstraint:
-			dirPath = filepath.Join(dirPath, constraint.path)
-		case mockFileConstraint:
+		case selector.DirConstraint:
+			dirPath = filepath.Join(dirPath, constraint.Location)
+		case selector.FileConstraint:
+			filePath = filepath.Join(dirPath, constraint.Location)
 			dirPath = ""
-			filePath = filepath.Join(dirPath, constraint.path)
 		}
 	}
 	return false, ""
@@ -277,9 +212,9 @@ func (s *mockSelector) versionConstraint() (found bool, version filesystem.Versi
 func (s *mockSelector) dirPath() string {
 	var dirPath string
 	for _, constraint := range s.constraints {
-		switch constraint.t {
-		case mockDirConstraint:
-			dirPath = filepath.Join(dirPath, constraint.path)
+		switch constraint.Type {
+		case selector.DirConstraint:
+			dirPath = filepath.Join(dirPath, constraint.Location)
 		}
 	}
 	return dirPath
@@ -287,19 +222,16 @@ func (s *mockSelector) dirPath() string {
 func (s *mockSelector) filePath() string {
 	var path string
 	for _, constraint := range s.constraints {
-		switch constraint.t {
-		case mockDirConstraint:
-			path = filepath.Join(path, constraint.path)
-		case mockFileConstraint:
-			path = filepath.Join(path, constraint.path)
+		switch constraint.Type {
+		case selector.DirConstraint:
+			path = filepath.Join(path, constraint.Location)
+		case selector.FileConstraint:
+			path = filepath.Join(path, constraint.Location)
 		}
 	}
 	return path
 }
 func (s *mockSelector) List() ([]string, error) {
-	if err := s.validate(true, false); err != nil {
-		return nil, err
-	}
 	versionFound, version := s.versionConstraint()
 	dirPath := s.dirPath()
 	dir, ok := s.bucket.dirVersions[dirPath]
@@ -345,9 +277,6 @@ func (s *mockSelector) List() ([]string, error) {
 	return finalResults, nil
 }
 func (s *mockSelector) BlobRef() (filesystem.StoredBlobRef, error) {
-	if err := s.validate(false, true); err != nil {
-		return filesystem.StoredBlobRef{}, err
-	}
 	versionFound, version := s.versionConstraint()
 	if !versionFound {
 		return filesystem.StoredBlobRef{}, fmt.Errorf("version must be specified for BlobRef()")
@@ -365,9 +294,6 @@ func (s *mockSelector) BlobRef() (filesystem.StoredBlobRef, error) {
 	return filesystem.StoredBlobRef{}, fmt.Errorf("file %q has no version %q", filePath, version)
 }
 func (s *mockSelector) Versions() ([]filesystem.Version, error) {
-	if err := s.validate(true, true); err != nil {
-		return nil, err
-	}
 	versionFound, version := s.versionConstraint()
 	var versions []string
 	filePath := s.filePath()
